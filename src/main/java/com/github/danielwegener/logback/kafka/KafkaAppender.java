@@ -4,6 +4,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.Appender;
 import ch.qos.logback.core.spi.AppenderAttachableImpl;
 import com.github.danielwegener.logback.kafka.delivery.FailedDeliveryCallback;
+import com.github.danielwegener.logback.kafka.message.*;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -29,14 +30,11 @@ public class KafkaAppender<E> extends KafkaAppenderConfig<E> {
     private LazyProducer lazyProducer = null;
     private final AppenderAttachableImpl<E> aai = new AppenderAttachableImpl<E>();
     private final ConcurrentLinkedQueue<E> queue = new ConcurrentLinkedQueue<E>();
-    private final FailedDeliveryCallback<E> failedDeliveryCallback = new FailedDeliveryCallback<E>() {
-        @Override
-        public void onFailedDelivery(E evt, Throwable throwable) {
-            aai.appendLoopOnAppenders(evt);
-        }
-    };
+    private final FailedDeliveryCallback<E> failedDeliveryCallback = (evt, throwable) -> aai.appendLoopOnAppenders(evt);
+    protected MdcKafkaMessageAssembler kafkaMessageAssembler;
 
     public KafkaAppender() {
+        kafkaMessageAssembler = new MdcKafkaMessageAssembler();
         // setting these as config values sidesteps an unnecessary warning (minor bug in KafkaProducer)
         addProducerConfigValue(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
         addProducerConfigValue(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
@@ -45,11 +43,15 @@ public class KafkaAppender<E> extends KafkaAppenderConfig<E> {
     @Override
     public void doAppend(E e) {
         ensureDeferredAppends();
-        if (e instanceof ILoggingEvent && ((ILoggingEvent)e).getLoggerName().startsWith(KAFKA_LOGGER_PREFIX)) {
+        if (e instanceof ILoggingEvent && ((ILoggingEvent) e).getLoggerName().startsWith(KAFKA_LOGGER_PREFIX)) {
             deferAppend(e);
         } else {
             super.doAppend(e);
         }
+    }
+
+    private KafkaLogMessage createKafkaMessage(ILoggingEvent loggingEvent) {
+        return kafkaMessageAssembler.createGelfMessage(new LogbackLogEvent(loggingEvent));
     }
 
     @Override
@@ -110,16 +112,75 @@ public class KafkaAppender<E> extends KafkaAppenderConfig<E> {
         return aai.detachAppender(name);
     }
 
+    public void setFacility(String facility) {
+        kafkaMessageAssembler.setFacility(facility);
+    }
+
+    public String getFacility() {
+        return kafkaMessageAssembler.getFacility();
+    }
+
+    public void setMdcFields(String spec) {
+        ConfigurationSupport.setMdcFields(spec, kafkaMessageAssembler);
+    }
+
+    public void setDynamicMdcFields(String spec) {
+        ConfigurationSupport.setDynamicMdcFields(spec, kafkaMessageAssembler);
+    }
+
+    public boolean isIncludeFullMdc() {
+        return kafkaMessageAssembler.isIncludeFullMdc();
+    }
+
+    public void setIncludeFullMdc(boolean includeFullMdc) {
+        kafkaMessageAssembler.setIncludeFullMdc(includeFullMdc);
+    }
+
+    public boolean isMdcProfiling() {
+        return kafkaMessageAssembler.isMdcProfiling();
+    }
+
+    public void setMdcProfiling(boolean mdcProfiling) {
+        kafkaMessageAssembler.setMdcProfiling(mdcProfiling);
+    }
+
+    public boolean isExtractStackTrace() {
+        return kafkaMessageAssembler.isExtractStackTrace();
+    }
+
+    public void setExtractStackTrace(boolean extractStacktrace) {
+        kafkaMessageAssembler.setExtractStackTrace(extractStacktrace);
+    }
+
+    public boolean isFilterStackTrace() {
+        return kafkaMessageAssembler.isFilterStackTrace();
+    }
+
+    public void setFilterStackTrace(boolean filterStackTrace) {
+        kafkaMessageAssembler.setFilterStackTrace(filterStackTrace);
+    }
+
+    public String getTimestampPattern() {
+        return kafkaMessageAssembler.getTimestampPattern();
+    }
+
+    public void setTimestampPattern(String timestampPattern) {
+        kafkaMessageAssembler.setTimestampPattern(timestampPattern);
+    }
+
     @Override
     protected void append(E e) {
-        final byte[] payload = encoder.doEncode(e);
+        ILoggingEvent event = (ILoggingEvent) e;
+        KafkaLogMessage message = createKafkaMessage(event);
+
+        final byte[] payload = encoder.doEncode((E) message.toJson(""));
         final byte[] key = keyingStrategy.createKey(e);
-        final ProducerRecord<byte[], byte[]> record = new ProducerRecord<byte[],byte[]>(topic, key, payload);
+        final ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topic, key, payload);
         deliveryStrategy.send(lazyProducer.get(), record, e, failedDeliveryCallback);
     }
 
     protected Producer<byte[], byte[]> createProducer() {
-        return new KafkaProducer<byte[], byte[]>(new HashMap<String, Object>(producerConfig));
+        return new KafkaProducer<>(new HashMap<>(producerConfig));
     }
 
     private void deferAppend(E event) {
@@ -147,9 +208,9 @@ public class KafkaAppender<E> extends KafkaAppenderConfig<E> {
         public Producer<byte[], byte[]> get() {
             Producer<byte[], byte[]> result = this.producer;
             if (result == null) {
-                synchronized(this) {
+                synchronized (this) {
                     result = this.producer;
-                    if(result == null) {
+                    if (result == null) {
                         this.producer = result = this.initialize();
                     }
                 }
@@ -168,7 +229,9 @@ public class KafkaAppender<E> extends KafkaAppenderConfig<E> {
             return producer;
         }
 
-        public boolean isInitialized() { return producer != null; }
+        public boolean isInitialized() {
+            return producer != null;
+        }
     }
 
 }

@@ -7,19 +7,20 @@ import java.nio.charset.Charset;
 /**
  * A KafkaMessageEncoder that can be configured with a {@link Layout} and a {@link Charset} and creates
  * a serialized string for each event using the given layout.
+ *
  * @since 0.1.0
  */
-public class LayoutKafkaMessageEncoder<E> extends KafkaMessageEncoderBase<E> {
+public class LayoutKafkaMessageEncoder<T> extends KafkaMessageEncoderBase<T> {
 
     public LayoutKafkaMessageEncoder() {
     }
 
-    public LayoutKafkaMessageEncoder(Layout<E> layout, Charset charset) {
+    public LayoutKafkaMessageEncoder(Layout<T> layout, Charset charset) {
         this.layout = layout;
         this.charset = charset;
     }
 
-    private Layout<E> layout;
+    private Layout<T> layout;
     private Charset charset;
     private static final Charset UTF8 = Charset.forName("UTF-8");
 
@@ -33,12 +34,16 @@ public class LayoutKafkaMessageEncoder<E> extends KafkaMessageEncoderBase<E> {
     }
 
     @Override
-    public byte[] doEncode(E event) {
-        final String message = layout.doLayout(event);
-        return message.getBytes(charset);
+    public byte[] doEncode(T message) {
+        byte[] messageBytes = new byte[0];
+
+        if (message instanceof String) {
+            messageBytes = ((String) message).getBytes(charset);
+        }
+        return messageBytes;
     }
 
-    public void setLayout(Layout<E> layout) {
+    public void setLayout(Layout<T> layout) {
         this.layout = layout;
     }
 
@@ -46,7 +51,7 @@ public class LayoutKafkaMessageEncoder<E> extends KafkaMessageEncoderBase<E> {
         this.charset = charset;
     }
 
-    public Layout<E> getLayout() {
+    public Layout<T> getLayout() {
         return layout;
     }
 
